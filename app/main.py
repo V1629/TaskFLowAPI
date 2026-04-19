@@ -1,10 +1,10 @@
-from fastapi import FastAPI , Query, Path, HTTPException , Depends , Cookie
+from fastapi import FastAPI , Query, Path, HTTPException , Depends , Cookie , Header
 from dotenv import load_dotenv
 from .models import TaskCreate , TaskStatus, TaskFilter 
 import os
 from uuid import UUID, uuid4
 from datetime import datetime   
-from typing import Annotated  
+from typing import Annotated 
 
 load_dotenv()
 
@@ -18,13 +18,29 @@ app = FastAPI(
 
 
 @app.get("/", tags=["Health"])
-async def root():
+async def root(
+    x_client_version : Annotated[str | None, Header()] = None,
+):
     """Health check — confirms the API is alive."""
     return {
         "status": "ok",
         "app": os.getenv("APP_NAME"),
         "debug": os.getenv("DEBUG"),
     }
+
+@app.get("/admin/tasks",tags=["Admin"])
+async def admin_list_tasks(
+    x_api_key : Annotated[str | None, Header()] = None,
+):
+    """Admin only  - requires x-api header"""
+    if x_api_key != "secret-admin-key":
+        raise HTTPException(
+            status_code = 403,
+            detail = " INvalid or missing api key"
+        )
+    
+    return {"total" : len(fake_db), "tasks" : fake_db}
+
 
 
 @app.get("/me",tags=["Auth"])
