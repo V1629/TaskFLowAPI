@@ -1,9 +1,10 @@
-from fastapi import FastAPI , Query, Path, HTTPException , Depends
+from fastapi import FastAPI , Query, Path, HTTPException , Depends , Cookie
 from dotenv import load_dotenv
 from .models import TaskCreate , TaskStatus, TaskFilter 
 import os
 from uuid import UUID, uuid4
-from datetime import datetime     
+from datetime import datetime   
+from typing import Annotated  
 
 load_dotenv()
 
@@ -24,6 +25,37 @@ async def root():
         "app": os.getenv("APP_NAME"),
         "debug": os.getenv("DEBUG"),
     }
+
+
+@app.get("/me",tags=["Auth"])
+async def get_session(
+    session_id : Annotated[str | None, Cookie()] = None
+):
+    if session_id is None:
+        return {"message" : "No session found  - please log in"}
+    
+    return {"message" : "Session active", "session_id" : session_id}
+
+from fastapi.responses import JSONResponse
+
+@app.post("/login",tags=["Auth"])
+async def login():
+    response = JSONResponse(content = {"message" : "Logged in successfully" , })
+    response.set_cookie(
+        key = "session_id",
+        value = str(uuid4()),
+        httponly = True,
+        max_age = 3600
+    )
+    return response
+
+@app.post("/logout",tags=["Auth"])
+async def logout():
+    response = JSONResponse(content = {"message" : "logged out"})
+    response.delete_cookie("session_id")
+    return response
+
+
 
 @app.get("/tasks/{task_id}",tags=["Tasks"])
 async def get_task(
