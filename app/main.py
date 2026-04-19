@@ -1,7 +1,9 @@
 from fastapi import FastAPI , Query, Path, HTTPException , Depends
 from dotenv import load_dotenv
-from app.models import TaskCreate , TaskStatus, TaskFilter 
+from .models import TaskCreate , TaskStatus, TaskFilter 
 import os
+from uuid import UUID, uuid4
+from datetime import datetime     
 
 load_dotenv()
 
@@ -25,7 +27,7 @@ async def root():
 
 @app.get("/tasks/{task_id}",tags=["Tasks"])
 async def get_task(
-    task_id: int = Path(
+    task_id: UUID = Path(
         ...,
         ge = 1,
         description = "The ID of the task to retrieve",
@@ -69,13 +71,14 @@ async def list_tasks(filters: TaskFilter = Depends()):
 async def create_task(task : TaskCreate):
     """Create a new task and add it to the database"""
     new_task = {
-        "task_id": len(fake_db) + 1,
+        "task_id": uuid4(),
+        "created_at" : datetime.now(),
         "title": task.title,
         "description": task.description,
         "status": task.status,
         "due_date": task.due_date,
         "assignee": task.assignee,
-        "priority": task.priority,
+        "tags": task.tags,
     }
     fake_db.append(new_task)
     
