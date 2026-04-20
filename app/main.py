@@ -1,6 +1,11 @@
 from fastapi import FastAPI , Query, Path, HTTPException , Depends , Cookie , Header
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
-from .models import TaskCreate , TaskStatus, TaskFilter 
+from .models import (
+    TaskCreate, TaskStatus, TaskFilter, SessionCookies, ClientHeaders,
+    TaskListResponse, TaskResponse, HealthResponse, AdminTasksResponse,
+    SessionResponse, AuthMessageResponse
+)
 import os
 from uuid import UUID, uuid4
 from datetime import datetime   
@@ -17,10 +22,8 @@ app = FastAPI(
 )
 
 
-@app.get("/", tags=["Health"])
-async def root(
-    x_client_version : Annotated[str | None, Header()] = None,
-):
+@app.get("/", tags=["Health"], response_model=HealthResponse)
+async def root(headers: Annotated[ClientHeaders, Depends()]):
     """Health check — confirms the API is alive."""
     return {
         "status": "ok",
@@ -28,12 +31,12 @@ async def root(
         "debug": os.getenv("DEBUG"),
     }
 
-@app.get("/admin/tasks",tags=["Admin"])
+@app.get("/admin/tasks", tags=["Admin"], response_model=AdminTasksResponse)
 async def admin_list_tasks(
-    x_api_key : Annotated[str | None, Header()] = None,
+    headers: Annotated[ClientHeaders, Depends()]
 ):
     """Admin only  - requires x-api header"""
-    if x_api_key != "secret-admin-key":
+    if headers.x_api_key != "secret-admin-key":
         raise HTTPException(
             status_code = 403,
             detail = " INvalid or missing api key"
@@ -43,18 +46,18 @@ async def admin_list_tasks(
 
 
 
-@app.get("/me",tags=["Auth"])
+@app.get("/me", tags=["Auth"], response_model=SessionResponse)
 async def get_session(
-    session_id : Annotated[str | None, Cookie()] = None
+    cookies: Annotated[SessionCookies, Depends()]
 ):
-    if session_id is None:
+    if cookies.session_id is None:
         return {"message" : "No session found  - please log in"}
     
-    return {"message" : "Session active", "session_id" : session_id}
+    return {"message" : "Session active", "session_id" : cookies.session_id}
 
 from fastapi.responses import JSONResponse
 
-@app.post("/login",tags=["Auth"])
+@app.post("/login", tags=["Auth"], response_model=AuthMessageResponse)
 async def login():
     response = JSONResponse(content = {"message" : "Logged in successfully" , })
     response.set_cookie(
@@ -65,7 +68,7 @@ async def login():
     )
     return response
 
-@app.post("/logout",tags=["Auth"])
+@app.post("/logout", tags=["Auth"], response_model=AuthMessageResponse)
 async def logout():
     response = JSONResponse(content = {"message" : "logged out"})
     response.delete_cookie("session_id")
@@ -73,7 +76,7 @@ async def logout():
 
 
 
-@app.get("/tasks/{task_id}",tags=["Tasks"])
+@app.get("/tasks/{task_id}",tags=["Tasks"], response_model = TaskResponse)
 async def get_task(
     task_id: UUID = Path(
         ...,
@@ -89,7 +92,7 @@ async def get_task(
 
     return task
 
-@app.get("/tasks", tags=["Tasks"])
+@app.get("/tasks", tags=["Tasks"], response_model = TaskListResponse)
 async def list_tasks(filters: TaskFilter = Depends()):
     results = list(fake_db)
 
@@ -99,14 +102,6 @@ async def list_tasks(filters: TaskFilter = Depends()):
     if filters.search:
         results = [t for t in results if filters.search.lower() in t["title"].lower()]
 
-    # fake_tasks = [
-    #     {"task_id": i, "title": f"Task #{i}", "status": "pending"}
-    #     for i in range(1, 20)
-    # ]
-
-    # if status != "all":
-    #     fake_tasks = [t for t in fake_tasks if t["status"] == status]
-
     #Apply pagination
     return {
         "total" : len(results),
@@ -115,7 +110,7 @@ async def list_tasks(filters: TaskFilter = Depends()):
         "results" : results[filters.skip : filters.skip+filters.limit],
     }
 
-@app.post("/create_tasks",tags = ["Create_Tasks"],status_code=201)
+@app.post("/create_tasks",tags = ["Create_Tasks"],status_code=201,response_model = TaskResponse)
 async def create_task(task : TaskCreate):
     """Create a new task and add it to the database"""
     new_task = {
@@ -130,8 +125,4 @@ async def create_task(task : TaskCreate):
     }
     fake_db.append(new_task)
     
-
-    return {
-        "message": "Task created successfully",
-        "task":new_task
-    }
+    return new_task
