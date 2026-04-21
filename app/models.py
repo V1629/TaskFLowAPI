@@ -1,8 +1,34 @@
 from pydantic import BaseModel,Field
+from fastapi import Form as FastAPIForm
 from datetime import datetime
 from enum import Enum
-from datetime import datetime
 from uuid import UUID
+from typing import Annotated
+
+
+class LoginForm(BaseModel):
+    username : str = Field(
+        ...,
+        min_length =5,
+        max_length = 100,
+        description = "User email address",
+        examples = ["john@example.com"],
+    )
+    password : str = Field(
+        ...,
+        min_length=6,
+        max_length=100,
+        description="User password",
+        examples=["password123"],
+ )
+    @classmethod
+    def as_form(
+        cls,
+        username: Annotated[str, FastAPIForm(min_length=5, max_length=100, description="user email address")],
+        password: Annotated[str, FastAPIForm(min_length=6, max_length=100, description="user password")]
+    ):
+        return cls(username=username, password=password)
+
 
 
 class SessionCookies(BaseModel):
@@ -41,23 +67,53 @@ class Assignee(BaseModel):
 class Tag(BaseModel):
     name: str = Field(..., min_length=1, max_length=30)
     color: str = Field(default="gray", pattern="^(gray|red|blue|green|yellow)$")
+
+
+class TaskBase(BaseModel):
+    title : str = Field(...,min_length = 3,max_length=100,examples = ["Buy groceries"])
+    description : str = Field(...,min_length = 10,max_length = 500, examples = ["Pick up milk, eggs, and bread from the store"])
+    status : str = Field(default = "pending",pattern = "^(pending|ongoing|completed)$")
+    due_date : datetime | None = Field(default = None,examples = ["2026-05-01T10:00:00"])
+    assignee : Assignee | None = Field(default = None)
+    tags : list[Tag] = Field(default = [])
+
     
-class TaskCreate(BaseModel):
-    title: str = Field( ...,min_length = 3,max_length=100,description="Title of the task",examples = ["Buy groceries"])
-    description: str = Field(...,min_length=10,max_length=500,description="detailed description of the task",examples = ["Pick up milk, eggs, and bread from the store"])
-    status: TaskStatus = Field(
-        default = "pending",
-        pattern = "^(pending|ongoing|completed)",
-        description="Filter task by status",
-        examples = ["pending"]
-    )
-    due_date: datetime | None = Field(
-        default=None,
-        description="Optional due date for the task",
-        examples = ["2026-05-01T10:00:00"]
-    )   
-    assignee : Assignee | None = Field(default=None)
-    tags :list[Tag] = Field(default=[],examples = [ {"name": "shopping", "color": "blue"},{"name": "urgent", "color": "red"}])
+class TaskCreate(TaskBase):
+     model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "title": "Buy groceries",
+                    "description": "Pick up milk, eggs, and bread from the store",
+                    "status": "pending",
+                    "due_date": "2026-05-01T10:00:00",
+                    "assignee": {"user_id": 1, "name": "John Doe", "email": "john@example.com"},
+                    "tags": [{"name": "shopping", "color": "blue"}]
+                }
+            ]
+        }
+    }
+
+
+
+class TaskUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=3, max_length=100)
+    description: str | None = Field(default=None, min_length=10, max_length=500)
+    status: str | None = Field(default=None, pattern="^(pending|ongoing|completed)$")
+    due_date: datetime | None = Field(default=None)
+    assignee: Assignee | None = Field(default=None)
+    tags: list[Tag] | None = Field(default=None)
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "status": "in_progress",    # only send what you want to update
+                    "tags": [{"name": "urgent", "color": "red"}]
+                }
+            ]
+        }
+    }
 
 
 class TaskResponse(BaseModel):
@@ -70,6 +126,11 @@ class TaskResponse(BaseModel):
     assignee: Assignee | None
     tags: list[Tag]
 
+
+class TaskInDB(TaskBase):
+    task_id : UUID
+    created_at : datetime
+    updated_at : datetime | None = None
 
 
 class TaskListResponse(BaseModel):
