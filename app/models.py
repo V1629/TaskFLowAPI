@@ -26,7 +26,7 @@ class LoginForm(BaseModel):
         cls,
         username: Annotated[str, FastAPIForm(min_length=5, max_length=100, description="user email address")],
         password: Annotated[str, FastAPIForm(min_length=6, max_length=100, description="user password")]
-    ):
+    ) -> "LoginForm":
         return cls(username=username, password=password)
 
 
@@ -184,6 +184,18 @@ class SessionResponse(BaseModel):
 
 class AuthMessageResponse(BaseModel):
     message: str
+
+
+class FileUploadResponse(BaseModel):
+    filename: str
+    content_type: str
+    size_mb: float
+    saved_to: str
+
+
+class MultipleFilesUploadResponse(BaseModel):
+    uploaded: int
+    files: list[dict]
 
 
 
