@@ -1,6 +1,8 @@
 from fastapi import FastAPI , Query, Path, HTTPException , Depends , Cookie , Header, status, Response, Form, UploadFile, File
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from app.errors import (
     http_exception_handler,
     validation_exception_handler,
@@ -18,6 +20,8 @@ import os
 from uuid import UUID, uuid4
 from datetime import datetime   
 from typing import Annotated , List
+from app.dependencies import verify_api_key, verify_session, pagination, verify_admin
+
 
 load_dotenv()
 
@@ -51,23 +55,18 @@ async def root(headers: Annotated[ClientHeaders, Depends()]):
         "debug": os.getenv("DEBUG"),
     }
 
+
 @app.get("/admin/tasks", 
          tags=["Admin"], response_model=AdminTasksResponse,
          summary="Admin — List All Tasks",
         description="Returns all tasks in the system. Requires a valid `X-API-Key` header.",
         response_description="All tasks with total count")
 async def admin_list_tasks(
-    headers: Annotated[ClientHeaders, Depends()]
+    #injecting dependecy
+    api_key : str = Depends(verify_api_key)
 ):
-    """Admin only  - requires x-api header"""
-    if headers.x_api_key != "secret-admin-key":
-        raise HTTPException(
-            status_code = status.HTTP_401_UNAUTHORIZED,
-            detail = " INvalid or missing api key"
-        )
     
     return {"total" : len(fake_db), "tasks" : fake_db}
-
 
 
 @app.get("/me", 
@@ -77,17 +76,12 @@ async def admin_list_tasks(
         description="Returns the current session info if a valid session cookie exists.",
         response_description="Session status and session ID")
 async def get_session(
-    cookies: Annotated[SessionCookies, Depends()]
+    #injecting depency
+    session_id: str = Depends(verify_session)
 ):
-    if cookies.session_id is None:
-        raise HTTPException(
-            status_code = status.HTTP_401_UNAUTHORIZED,
-            detail = "NO session found  - please login"
-        )
     
-    return {"message" : "Session active", "session_id" : cookies.session_id}
+    return {"message" : "Session active", "session_id" : session_id}
 
-from fastapi.responses import JSONResponse
 
 @app.post("/login", 
           tags=["Auth"], response_model=AuthMessageResponse,
@@ -141,7 +135,6 @@ async def login_form(form: Annotated[LoginForm, Depends(LoginForm.as_form)]):
     return response
 
 
-
 @app.post("/logout", 
           tags=["Auth"], response_model=AuthMessageResponse,
           summary="Logout",
@@ -151,7 +144,6 @@ async def logout():
     response = JSONResponse(content = {"message" : "logged out"})
     response.delete_cookie("session_id")
     return response
-
 
 
 @app.get("/tasks/{task_id}",
@@ -168,7 +160,7 @@ async def get_task(
     )
 ):
 
-    task = next((t for t in fake_db if t["task_id"] == task_id),None)
+    task = next((t for t in fake_db if t["task_id"] == str(task_id)),None)
 
     if task is None:
         raise HTTPException(status_code=404,detail=f"Task {task_id} not found")
@@ -193,20 +185,29 @@ async def update_task(
     """partially update a task  - only send field which you want to change"""
 
     task_index = next(
-        (i for i, t in enumerate(fake_db) if t["task_id"] == task_id),
+        (i for i, t in enumerate(fake_db) if t["task_id"] == str(task_id)),
         None
     )
     if task_index is None:
         raise HTTPException(status_code = 404,detail = f"Task {task_id} not found ")
     
-    update_data = updates.model_dump(exclude_unset =True)
-    fake_db[task_index].update(update_data)
+    existing_task = fake_db[task_index]
 
-    return fake_db[task_index]
+    # Step 3 — get only fields client actually sent
+    update_data = updates.model_dump(exclude_unset=True)
+
+    # Step 4 — merge: existing data updated with only the sent fields
+    updated_task = {**existing_task, **jsonable_encoder(update_data)}
+
+    # Step 5 — save back to db
+    fake_db[task_index] = updated_task
+
+    return updated_task
 
 
 @app.get("/tasks", tags=["Tasks"], response_model = TaskListResponse)
-async def list_tasks(filters: TaskFilter = Depends()):
+async def list_tasks(filters: TaskFilter = Depends(),
+                     pages: dict = Depends(pagination)):
     results = list(fake_db)
 
     if filters.status:
@@ -218,12 +219,21 @@ async def list_tasks(filters: TaskFilter = Depends()):
     #Apply pagination
     return {
         "total" : len(results),
-        "skip" : filters.skip,
-        "limit" : filters.limit,
-        "results" : results[filters.skip : filters.skip+filters.limit],
+        "skip" : pages["skip"],
+        "limit" : pages["limit"],
+        "results" : results[pages["skip"]: pages["skip"]+pages["limit"]],
     }
 
-@app.post("/create_tasks",tags = ["Create_Tasks"],status_code=status.HTTP_201_CREATED,response_model = TaskResponse)
+
+@app.post("/create_tasks",
+          tags = ["Create_Tasks"],
+          status_code=status.HTTP_201_CREATED,
+          summary = "Create task",
+          description = """
+                        Create a anew task with optional assignee and tags.""",
+          response_model = TaskResponse,
+          response_description = "The newy created task"
+          )
 async def create_task(task : TaskCreate):
     """Create a new task and add it to the database"""
     new_task = {
@@ -236,15 +246,16 @@ async def create_task(task : TaskCreate):
         "assignee": task.assignee,
         "tags": task.tags,
     }
-    fake_db.append(new_task)
+    encoded_task = jsonable_encoder(new_task)
+    fake_db.append(encoded_task)
     
-    return new_task
+    return encoded_task
 
 
 @app.delete("/tasks/{task_id}",tags = ["Tasks"],status_code = status.HTTP_204_NO_CONTENT,)
 async def delete_task(task_id : UUID = Path(...,description = "the uuid of the task to delete"),):
     task_index = next(
-        (i for i,t in enumerate(fake_db) if t["task_id"] == task_id), None
+        (i for i,t in enumerate(fake_db) if t["task_id"] == str(task_id)), None
     )
     if task_index is None:
         raise HTTPException(
@@ -316,12 +327,6 @@ async def attach_file_to_task(
         "message" : "File attached successfully",
         "Attachment" : attachment,
     }
-
-
-
-
-
-
 
 
 ###FIle routes
